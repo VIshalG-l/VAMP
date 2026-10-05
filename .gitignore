@@ -1,5 +1,16 @@
+logs/
+bugreport/
+modules/logs/
 venv/
 __pycache__/
-*.pyc
-.env
 *.log
+*.txt
+*.zip
+.env
+
+# Backup files
+*.save
+*.bak
+
+# Documents directory
+Documents/
