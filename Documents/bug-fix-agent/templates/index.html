@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>VAMP-SENTINEL</title>
+
+<link rel="stylesheet" href="/static/style.css">
+
+</head>
+
+<body>
+
+<div class="container">
+
+<header class="header">
+
+<div>
+
+<div class="version">Version 2.0</div>
+
+<h1>🤖 VAMP-SENTINEL</h1>
+
+<p>Autonomous Android AI Bug Detection & Resolution Framework</p>
+
+</div>
+
+</header>
+
+
+<!-- Action Buttons -->
+
+<section class="actions">
+
+<button id="anrBtn" class="action-card anr">
+
+<div class="icon">🚀</div>
+
+<div>
+
+<h3>Run ANR Analysis</h3>
+
+<p>Analyze and repair Application Not Responding issues.</p>
+
+</div>
+
+</button>
+
+<button id="displayBtn" class="action-card crash">
+
+<div class="icon">💥</div>
+
+<div>
+
+<h3>Display Crash</h3>
+
+<p>Analyze rendering and display related crashes.</p>
+
+</div>
+
+</button>
+
+<button id="clearBtn" class="action-card clear">
+
+<div class="icon">🧹</div>
+
+<div>
+
+<h3>Clear Console</h3>
+
+<p>Reset terminal and prepare for the next execution.</p>
+
+</div>
+
+</button>
+
+</section>
+<!-- Statistics -->
+<section class="stats">
+
+    <div class="stat-card">
+        <h4>Total Runs</h4>
+        <h2 id="runCount">0</h2>
+    </div>
+
+    <div class="stat-card">
+        <h4>Elapsed Time</h4>
+        <h2 id="elapsedTime">00:00</h2>
+    </div>
+
+    <div class="stat-card">
+        <h4>Bugs Fixed</h4>
+        <h2 id="fixedCount">0</h2>
+    </div>
+
+</section>
+
+
+<!-- Pipeline -->
+
+<section class="panel">
+
+<div class="panel-title">
+
+<!-- Console -->
+
+<section class="console-panel">
+
+<div class="console-header">
+
+<div>
+
+💻 Real-Time Pipeline Logs
+
+</div>
+
+<div class="live">
+
+● LIVE
+
+</div>
+
+</div>
+
+<div id="terminal">
+
+Waiting...
+
+</div>
+
+</section>
+
+</div>
+
+<script src="/static/script.js"></script>
+
+</body>
+
+</html>

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <title>VAMP-SENTINEL</title>
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='style.css') }}">
+
+</head>
+
+<body>
+
+<div class="container">
+
+    <div class="header">
+
+        <h1>VAMP-SENTINEL</h1>
+
+        <p>Android AI Bug Fix Framework</p>
+
+    </div>
+
+    <div class="buttons">
+
+        <button id="anrBtn">
+            🚀 Run ANR
+        </button>
+
+        <button id="displayBtn">
+            💥 Run Display Crash
+        </button>
+
+        <button id="clearBtn">
+            🗑 Clear Console
+        </button>
+
+    </div>
+
+    <div class="status">
+
+        Status :
+
+        <span id="status">
+            ⚪ Idle
+        </span>
+
+    </div>
+
+    <div id="terminal">
+
+Waiting...
+
+    </div>
+
+</div>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+
+</body>
+
+</html>
