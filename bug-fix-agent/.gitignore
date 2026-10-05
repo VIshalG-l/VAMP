@@ -25,13 +25,3 @@ bug-fix-agent/log.txt
 
 # Environment/secrets
 .env
-# Documents directory
-Documents/
-
-# Additional backup/old files
-**/*.save
-**/*_back.*
-**/*_old.*
-
-# Generated bug reports
-bug-fix-agent/bugreport/

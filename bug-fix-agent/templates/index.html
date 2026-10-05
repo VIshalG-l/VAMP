@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="theme-color"
+        content="#07111f"
+    >
+
+    <title>VAMP-SENTINEL | Android Reliability</title>
+
+    <link
+        rel="stylesheet"
+        href="/static/style.css"
+    >
+
+</head>
+
+
+<body>
+
+<div class="app-shell">
+
+    <!-- =====================================================
+         TOP NAVIGATION
+         ===================================================== -->
+
+    <header class="topbar">
+
+        <div class="brand">
+
+            <div class="brand-mark">
+                ◈
+            </div>
+
+            <div class="brand-copy">
+
+                <div class="brand-name">
+                    VAMP <span>◈</span> SENTINEL
+                </div>
+
+                <div class="brand-subtitle">
+                    Autonomous Android Reliability Platform
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <div class="system-state">
+
+            <span class="status-dot"></span>
+
+            <span id="systemStatus">
+                SYSTEM OPERATIONAL
+            </span>
+
+            <span class="version-badge">
+                v2.0
+            </span>
+
+        </div>
+
+    </header>
+
+
+    <!-- =====================================================
+         HERO / COMMAND BAR
+         ===================================================== -->
+
+    <section class="hero">
+
+        <div>
+
+            <div class="eyebrow">
+                ANDROID INTELLIGENCE PLATFORM
+            </div>
+
+            <h1>
+                Autonomous failure detection.
+                <span>AI-assisted resolution.</span>
+            </h1>
+
+            <p>
+                Continuously monitor Android runtime behavior,
+                identify application failures, generate repairs,
+                rebuild and verify the corrected APK.
+            </p>
+
+        </div>
+
+
+        <div class="hero-actions">
+
+            <button
+                id="diagnosisBtn"
+                class="primary-action"
+            >
+
+                <span class="action-icon">
+                    ▶
+                </span>
+
+                <span>
+
+                    <strong>
+                        Start VAMP Diagnosis
+                    </strong>
+
+                    <small>
+                        Detect · Analyze · Repair · Verify
+                    </small>
+
+                </span>
+
+            </button>
+
+
+            <button
+                id="clearBtn"
+                class="secondary-action"
+            >
+                Clear Activity
+            </button>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         SYSTEM METRICS
+         ===================================================== -->
+
+    <section class="metrics">
+
+        <div class="metric-card">
+
+            <div class="metric-top">
+
+                <span class="metric-label">
+                    DEVICE
+                </span>
+
+                <span class="metric-indicator green">
+                    ●
+                </span>
+
+            </div>
+
+            <div
+                id="deviceMetric"
+                class="metric-value"
+            >
+                CONNECTED
+            </div>
+
+            <div class="metric-detail">
+                Cuttlefish · Android 17
+            </div>
+
+        </div>
+
+
+        <div class="metric-card">
+
+            <div class="metric-top">
+
+                <span class="metric-label">
+                    MONITORING
+                </span>
+
+                <span
+                    id="monitorIndicator"
+                    class="metric-indicator blue"
+                >
+                    ●
+                </span>
+
+            </div>
+
+            <div
+                id="monitorMetric"
+                class="metric-value"
+            >
+                READY
+            </div>
+
+            <div
+                id="elapsedMetric"
+                class="metric-detail"
+            >
+                00:00
+            </div>
+
+        </div>
+
+
+        <div class="metric-card">
+
+            <div class="metric-top">
+
+                <span class="metric-label">
+                    AI ENGINE
+                </span>
+
+                <span class="metric-indicator purple">
+                    ✦
+                </span>
+
+            </div>
+
+            <div class="metric-value">
+                GEMINI
+            </div>
+
+            <div class="metric-detail">
+                AI diagnosis available
+            </div>
+
+        </div>
+
+
+        <div class="metric-card">
+
+            <div class="metric-top">
+
+                <span class="metric-label">
+                    REPAIRS
+                </span>
+
+                <span class="metric-indicator green">
+                    ✓
+                </span>
+
+            </div>
+
+            <div
+                id="repairMetric"
+                class="metric-value"
+            >
+                0
+            </div>
+
+            <div class="metric-detail">
+                Verified repairs
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         MAIN OPERATIONS AREA
+         ===================================================== -->
+
+    <section class="operations-grid">
+
+        <!-- ================= INCIDENT CENTER ================= -->
+
+        <div
+            id="incidentCard"
+            class="incident-card"
+        >
+
+            <div class="section-heading">
+
+                <div>
+
+                    <span class="section-kicker">
+                        LIVE INCIDENT CENTER
+                    </span>
+
+                    <h2 id="incidentTitle">
+                        Runtime monitoring
+                    </h2>
+
+                </div>
+
+                <span
+                    id="incidentBadge"
+                    class="live-badge"
+                >
+                    ● MONITORING
+                </span>
+
+            </div>
+
+
+            <div
+                id="incidentContent"
+                class="incident-content"
+            >
+
+                <div class="monitor-orb">
+                    <span></span>
+                </div>
+
+                <h3>
+                    Waiting for Android failure
+                </h3>
+
+                <p>
+                    VAMP is continuously monitoring runtime
+                    signals from the connected Android device.
+                </p>
+
+
+                <div class="failure-types">
+
+                    <span>
+                        GENERIC ANDROID FAILURE MONITORING
+                    </span>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- ================= CURRENT APPLICATION ================= -->
+
+        <section class="application-card">
+
+            <div class="section-heading">
+
+                <div>
+
+                    <span class="section-kicker">
+                        CURRENT APPLICATION
+                    </span>
+
+                    <h2 id="currentApplication">
+                        Waiting for application
+                    </h2>
+
+                    <p id="applicationDetail">
+                        VAMP will identify the application
+                        from Android runtime evidence.
+                    </p>
+
+                </div>
+
+                <div
+                    id="applicationStatus"
+                    class="application-status"
+                >
+                    WAITING
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ================= DEVICE ================= -->
+
+        <div class="device-card">
+
+            <div class="section-heading">
+
+                <div>
+
+                    <span class="section-kicker">
+                        ANDROID DEVICE
+                    </span>
+
+                    <h2>
+                        Connected target
+                    </h2>
+
+                </div>
+
+                <span class="connected-badge">
+                    CONNECTED
+                </span>
+
+            </div>
+
+
+            <div class="device-identity">
+
+                <div class="device-icon">
+                    ◎
+                </div>
+
+                <div>
+
+                    <strong>
+                        Google
+                    </strong>
+
+                    <span>
+                        Cuttlefish x86_64 phone
+                    </span>
+
+                </div>
+
+            </div>
+
+
+            <div class="device-details">
+
+                <div>
+                    <span>
+                        ANDROID
+                    </span>
+                    <strong>
+                        17
+                    </strong>
+                </div>
+
+                <div>
+                    <span>
+                        SDK
+                    </span>
+                    <strong>
+                        37
+                    </strong>
+                </div>
+
+                <div>
+                    <span>
+                        ADB
+                    </span>
+                    <strong>
+                        Connected
+                    </strong>
+                </div>
+
+                <div>
+                    <span>
+                        SERIAL
+                    </span>
+                    <strong>
+                        0.0.0.0:6520
+                    </strong>
+                </div>
+
+            </div>
+
+
+            <div class="device-footer">
+
+                <span class="status-dot"></span>
+
+                Android device ready for diagnosis
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         OPERATIONAL SUMMARY
+         ===================================================== -->
+
+    <section class="summary-grid">
+
+        <div class="summary-card">
+
+            <span class="summary-label">
+                TOTAL RUNS
+            </span>
+
+            <strong id="runCount">
+                0
+            </strong>
+
+            <span>
+                Diagnosis executions
+            </span>
+
+        </div>
+
+
+        <div class="summary-card">
+
+            <span class="summary-label">
+                ELAPSED TIME
+            </span>
+
+            <strong id="elapsedTime">
+                00:00
+            </strong>
+
+            <span>
+                Current execution
+            </span>
+
+        </div>
+
+
+        <div class="summary-card">
+
+            <span class="summary-label">
+                BUGS FIXED
+            </span>
+
+            <strong id="fixedCount">
+                0
+            </strong>
+
+            <span>
+                Successful repairs
+            </span>
+
+        </div>
+
+
+        <div class="summary-card readiness">
+
+            <span class="summary-label">
+                SYSTEM READINESS
+            </span>
+
+            <strong>
+                7 / 7
+            </strong>
+
+            <span>
+                Environment checks ready
+            </span>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         REAL-TIME ACTIVITY
+         ===================================================== -->
+
+    <section class="console-panel">
+
+        <div class="console-header">
+
+            <div class="console-title">
+
+                <span class="terminal-icon">
+                    &gt;_
+                </span>
+
+                <div>
+
+                    <strong>
+                        Real-Time Activity
+                    </strong>
+
+                    <small>
+                        VAMP runtime telemetry
+                    </small>
+
+                </div>
+
+            </div>
+
+
+            <div class="console-live">
+
+                <span class="status-dot"></span>
+
+                LIVE
+
+            </div>
+
+        </div>
+
+
+        <div
+            id="terminal"
+            class="terminal"
+        >
+            Waiting for VAMP activity...
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         FOOTER
+         ===================================================== -->
+
+    <footer class="footer">
+
+        <span>
+            VAMP-SENTINEL
+        </span>
+
+        <span>
+            Autonomous Android Bug Detection & Resolution
+        </span>
+
+        <span>
+            v2.0
+        </span>
+
+    </footer>
+
+</div>
+
+
+<script src="/static/script.js"></script>
+
+</body>
+
+</html>

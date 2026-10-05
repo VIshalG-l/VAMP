@@ -1,0 +1,2118 @@
+from pathlib import Path
+
+from config import MAX_RETRIES
+
+from modules.project_resolver import ProjectResolver
+from modules.failure_evidence import FailureEvidenceCollector
+from modules.evidence_analyzer import EvidenceAnalyzer
+from modules.code_search import find_source
+from modules.file_reader import read_context
+from modules.llm import ask_llm
+from modules.patch_validator import PatchValidator
+from modules.patch_applier import PatchApplier
+from modules.builder import build_project
+
+
+class BugFixAgent:
+    """
+    VAMP Android failure diagnosis and AI repair agent.
+
+    Current pipeline:
+
+        Incident
+            |
+            v
+        FailureEvidenceCollector
+            |
+            v
+        FailureEvidence
+            |
+            v
+        EvidenceAnalyzer
+            |
+            v
+        ProjectResolver
+            |
+            v
+        Source Discovery
+            |
+            v
+        Source Context
+            |
+            v
+        Gemini RCA
+            |
+            v
+        AI Patch Proposal
+            |
+            v
+        Patch Validator
+            |
+            v
+        ACCEPT / REJECT
+
+    IMPORTANT:
+
+        This version DOES NOT yet:
+
+            - modify source files
+            - apply AI patches
+            - build the project
+            - install an APK
+            - launch an APK
+            - verify the patch
+            - rollback source files
+
+        The LLM is currently used for:
+
+            RCA + patch proposal
+
+        The generated patch is validated before any future
+        source modification is allowed.
+    """
+
+    def __init__(
+        self,
+        incident,
+        source_roots=None,
+        max_retries=None,
+    ):
+        self.incident = incident
+
+        self.source_roots = source_roots
+
+        self.max_retries = (
+            max_retries
+            if max_retries is not None
+            else MAX_RETRIES
+        )
+
+        self.resolver = ProjectResolver(
+            source_roots=source_roots
+        )
+
+        self.evidence_collector = (
+            FailureEvidenceCollector(
+                serial=getattr(
+                    incident,
+                    "device_serial",
+                    None,
+                )
+            )
+        )
+
+        self.evidence_analyzer = (
+            EvidenceAnalyzer()
+        )
+
+        # --------------------------------------------------------
+        # Patch validator
+        # --------------------------------------------------------
+
+        self.patch_validator = (
+            PatchValidator()
+        )
+
+        self.patch_applier = (
+            PatchApplier()
+        )
+
+        self.workspace = None
+        self.module = None
+
+        self.evidence = None
+        self.analysis = None
+
+        self.source = None
+        self.context = None
+
+        # AI result
+        self.patch = None
+
+        # Patch validation result
+        self.patch_validation = None
+
+    # ============================================================
+    # MAIN PIPELINE
+    # ============================================================
+
+    def run(self):
+
+        print()
+        print("=" * 70)
+        print("             VAMP DIAGNOSIS PIPELINE")
+        print("=" * 70)
+
+        self.print_incident()
+
+        # --------------------------------------------------------
+        # STEP 1
+        # Collect device evidence
+        # --------------------------------------------------------
+
+        print()
+        print("[1] Collecting failure evidence...")
+
+        try:
+
+            self.evidence = (
+                self.evidence_collector.collect(
+                    self.incident
+                )
+            )
+
+        except Exception as exc:
+
+            print()
+            print(
+                "❌ Failure evidence collection failed:"
+            )
+
+            print(exc)
+
+            return False
+
+        if not self.evidence:
+
+            print()
+            print(
+                "❌ No failure evidence was collected."
+            )
+
+            return False
+
+        print()
+        print(
+            "✅ Failure evidence collected."
+        )
+
+        # --------------------------------------------------------
+        # STEP 2
+        # Analyze evidence
+        # --------------------------------------------------------
+
+        print()
+        print("[2] Analyzing failure evidence...")
+
+        try:
+
+            self.analysis = (
+                self.evidence_analyzer.analyze(
+                    self.evidence
+                )
+            )
+
+        except Exception as exc:
+
+            print()
+            print(
+                "❌ Evidence analysis failed:"
+            )
+
+            print(exc)
+
+            return False
+
+        # --------------------------------------------------------
+        # Correct unreliable ANR reason
+        # --------------------------------------------------------
+
+        self.correct_analysis_from_incident()
+
+        self.evidence_analyzer.print_analysis(
+            self.analysis
+        )
+
+        print()
+        print(
+            "✅ Failure evidence analyzed."
+        )
+
+        # --------------------------------------------------------
+        # STEP 3
+        # Resolve source project
+        # --------------------------------------------------------
+
+        print()
+        print("[3] Resolving source project...")
+
+        package = (
+            self.analysis.package
+            or getattr(
+                self.incident,
+                "package",
+                "",
+            )
+        )
+
+        if not package:
+
+            print()
+            print(
+                "❌ Package could not be identified."
+            )
+
+            return False
+
+        resolved = self.resolve_project(
+            package
+        )
+
+        if not resolved:
+
+            print()
+            print(
+                "❌ Unable to resolve source project."
+            )
+
+            return False
+
+        self.workspace = resolved[
+            "workspace"
+        ]
+
+        self.module = resolved.get(
+            "module"
+        )
+
+        print()
+        print(
+            "✅ Workspace resolved:"
+        )
+
+        print(
+            self.workspace
+        )
+
+        if self.module:
+
+            print(
+                "Module:"
+            )
+
+            print(
+                self.module
+            )
+
+        # --------------------------------------------------------
+        # STEP 4
+        # Find source
+        # --------------------------------------------------------
+
+        print()
+        print(
+            "[4] Locating relevant source code..."
+        )
+
+        self.source = self.locate_source()
+
+        if not self.source:
+
+            print()
+            print(
+                "⚠ No exact source file could be identified."
+            )
+
+            print()
+            print(
+                "The failure is diagnosed, but "
+                "AI source-level repair cannot safely continue."
+            )
+
+            self.print_final_diagnosis(
+                source_found=False
+            )
+
+            return True
+
+        print()
+        print(
+            "✅ Candidate source found:"
+        )
+
+        print(
+            self.source["path"]
+        )
+
+        # --------------------------------------------------------
+        # STEP 5
+        # Read source context
+        # --------------------------------------------------------
+
+        print()
+        print("[5] Reading source context...")
+
+        try:
+
+            self.context = (
+                self.read_source_context()
+            )
+
+        except Exception as exc:
+
+            print()
+            print(
+                "⚠ Source context could not be loaded:"
+            )
+
+            print(exc)
+
+            self.print_final_diagnosis(
+                source_found=True,
+                context_loaded=False,
+            )
+
+            return True
+
+        if not self.context:
+
+            print()
+            print(
+                "⚠ Source context is empty."
+            )
+
+            self.print_final_diagnosis(
+                source_found=True,
+                context_loaded=False,
+            )
+
+            return True
+
+        print()
+        print(
+            "✅ Source context loaded."
+        )
+
+        print(
+            "File:",
+            self.context.get(
+                "file",
+                self.source["path"],
+            )
+        )
+
+        print(
+            "Lines:",
+            self.context.get(
+                "total_lines",
+                "unknown",
+            )
+        )
+
+        # --------------------------------------------------------
+        # STEP 6
+        # Gemini RCA + Patch
+        # --------------------------------------------------------
+
+        print()
+        print(
+            "[6] Generating AI root-cause analysis..."
+        )
+
+        try:
+
+            self.patch = (
+                self.generate_ai_analysis()
+            )
+
+        except Exception as exc:
+
+            print()
+            print(
+                "⚠ AI analysis failed:"
+            )
+
+            print(exc)
+
+            self.print_final_diagnosis(
+                source_found=True,
+                context_loaded=True,
+            )
+
+            return True
+
+        if not self.patch:
+
+            print()
+            print(
+                "⚠ AI did not return an analysis."
+            )
+
+            self.print_final_diagnosis(
+                source_found=True,
+                context_loaded=True,
+            )
+
+            return True
+
+        print()
+        print(
+            "✅ AI root-cause analysis completed."
+        )
+
+        self.print_ai_result()
+
+        # --------------------------------------------------------
+        # STEP 7
+        # Validate AI patch
+        # --------------------------------------------------------
+
+        print()
+        print(
+            "[7] Validating AI patch..."
+        )
+
+        validation_ok = (
+            self.validate_ai_patch()
+        )
+
+        if not validation_ok:
+
+            print()
+            print(
+                "⚠ AI patch was rejected by the "
+                "PatchValidator."
+            )
+
+            print()
+            print(
+                "The source file will NOT be modified."
+            )
+
+            self.print_pipeline_status(
+                patch_generated=True,
+                patch_valid=False,
+            )
+
+            return True
+
+        print()
+        print(
+            "✅ AI patch passed validation."
+        )
+
+        # --------------------------------------------------------
+        # STEP 8
+        # Apply validated patch
+        # --------------------------------------------------------
+
+        print()
+        print(
+            "[8] Applying validated AI patch..."
+        )
+
+        patch_applied = (
+            self.apply_ai_patch()
+        )
+
+        if not patch_applied:
+
+            print()
+            print(
+                "⚠ Patch application failed."
+            )
+
+            print()
+            print(
+                "The source was not left in an unsafe "
+                "partially modified state."
+            )
+
+            self.print_pipeline_status(
+                patch_generated=True,
+                patch_valid=True,
+                patch_applied=False,
+            )
+
+            return True
+
+        print()
+        print(
+            "✅ AI patch applied successfully."
+        )
+
+        self.print_pipeline_status(
+            patch_generated=True,
+            patch_valid=True,
+            patch_applied=True,
+        )
+
+        return True
+
+    # ============================================================
+    # PATCH APPLICATION
+    # ============================================================
+
+    def apply_ai_patch(self):
+
+        if not self.patch:
+
+            print()
+            print(
+                "❌ Cannot apply: patch object is missing."
+            )
+
+            return False
+
+        if not self.patch_validation:
+
+            print()
+            print(
+                "❌ Cannot apply: patch was not validated."
+            )
+
+            return False
+
+        if not bool(self.patch_validation):
+
+            print()
+            print(
+                "❌ Cannot apply: PatchValidator rejected patch."
+            )
+
+            return False
+
+        if not self.source:
+
+            print()
+            print(
+                "❌ Cannot apply: source file is missing."
+            )
+
+            return False
+
+        source_path = (
+            self.source.get(
+                "path",
+                "",
+            )
+        )
+
+        old_code = getattr(
+            self.patch,
+            "old_code",
+            "",
+        )
+
+        new_code = getattr(
+            self.patch,
+            "new_code",
+            "",
+        )
+
+        if not old_code.strip():
+
+            print()
+            print(
+                "❌ Cannot apply: old_code is empty."
+            )
+
+            return False
+
+        if not new_code.strip():
+
+            print()
+            print(
+                "❌ Cannot apply: new_code is empty."
+            )
+
+            return False
+
+        print()
+        print(
+            "→ Applying validated patch..."
+        )
+
+        print(
+            "  Source:",
+            source_path
+        )
+
+        print(
+            "  old_code length:",
+            len(old_code)
+        )
+
+        print(
+            "  new_code length:",
+            len(new_code)
+        )
+
+        try:
+
+            result = self.patch_applier.apply(
+                source_path=source_path,
+                old_code=old_code,
+                new_code=new_code,
+            )
+
+        except Exception as exc:
+
+            print()
+            print(
+                "❌ PatchApplier failed unexpectedly:"
+            )
+
+            print(exc)
+
+            return False
+
+        print(result)
+
+        if not result.success:
+
+            print()
+            print(
+                "❌ Patch was NOT applied."
+            )
+
+            return False
+
+        print()
+        print(
+            "✅ Patch application verified."
+        )
+
+        return True
+
+
+    # ============================================================
+    # PATCH VALIDATION
+    # ============================================================
+
+    def validate_ai_patch(self):
+
+        if not self.patch:
+
+            print()
+            print(
+                "❌ Cannot validate: patch object is missing."
+            )
+
+            return False
+
+        if not self.source:
+
+            print()
+            print(
+                "❌ Cannot validate: source file is missing."
+            )
+
+            return False
+
+        source_path = (
+            self.source.get(
+                "path",
+                "",
+            )
+        )
+
+        failure_type = (
+            self.analysis.failure_type
+            if self.analysis
+            else getattr(
+                self.incident,
+                "bug_type",
+                "UNKNOWN",
+            )
+        )
+
+        print()
+        print(
+            "→ Validating generated patch..."
+        )
+
+        print(
+            "  Source:",
+            source_path
+        )
+
+        print(
+            "  Failure type:",
+            failure_type
+        )
+
+        try:
+
+            self.patch_validation = (
+                self.patch_validator.validate(
+                    patch=self.patch,
+                    source_path=source_path,
+                    failure_type=failure_type,
+                )
+            )
+
+        except Exception as exc:
+
+            print()
+            print(
+                "❌ Patch validation failed unexpectedly:"
+            )
+
+            print(exc)
+
+            self.patch_validation = None
+
+            return False
+
+        print(
+            self.patch_validation
+        )
+
+        return bool(
+            self.patch_validation
+        )
+
+    # ============================================================
+    # PIPELINE STATUS
+    # ============================================================
+
+    def print_pipeline_status(
+        self,
+        patch_generated=False,
+        patch_valid=False,
+        patch_applied=False,
+    ):
+
+        print()
+        print("=" * 70)
+        print("             VAMP PIPELINE STATUS")
+        print("=" * 70)
+
+        print(
+            "Diagnosis     : COMPLETE"
+        )
+
+        print(
+            "AI Analysis   : COMPLETE"
+        )
+
+        print(
+            "Patch Proposal:",
+            "GENERATED"
+            if patch_generated
+            else "NOT GENERATED"
+        )
+
+        if patch_generated:
+
+            print(
+                "Patch Valid   :",
+                "ACCEPTED"
+                if patch_valid
+                else "REJECTED"
+            )
+
+        else:
+
+            print(
+                "Patch Valid   : NOT CHECKED"
+            )
+
+        if patch_applied:
+
+            print(
+                "Patch Applied : SUCCESS"
+            )
+
+        elif patch_valid:
+
+            print(
+                "Patch Applied : FAILED"
+            )
+
+        else:
+
+            print(
+                "Patch Applied : NOT YET"
+            )
+
+        print(
+            "Build         : NOT YET"
+        )
+
+        print(
+            "Verification  : NOT YET"
+        )
+
+        print("=" * 70)
+
+    # ============================================================
+    # CORRECT ANALYSIS FROM INCIDENT
+    # ============================================================
+
+    def correct_analysis_from_incident(self):
+
+        if not self.analysis:
+            return
+
+        incident_reason = (
+            getattr(
+                self.incident,
+                "reason",
+                "",
+            )
+            or ""
+        ).strip()
+
+        incident_type = (
+            getattr(
+                self.incident,
+                "bug_type",
+                "",
+            )
+            or ""
+        ).upper()
+
+        if incident_type == "ANR":
+
+            if incident_reason:
+
+                current_reason = (
+                    self.analysis.anr_reason
+                    or ""
+                ).strip()
+
+                suspicious_reason = (
+                    not current_reason
+                    or current_reason.lower()
+                    in {
+                        "system compaction memory stats",
+                        "unknown",
+                    }
+                    or "compaction memory"
+                    in current_reason.lower()
+                )
+
+                if suspicious_reason:
+
+                    print()
+                    print(
+                        "⚠ Correcting unreliable ANR reason "
+                        "from Incident."
+                    )
+
+                    print(
+                        "Collected:",
+                        current_reason
+                        or "<empty>"
+                    )
+
+                    print(
+                        "Incident :",
+                        incident_reason
+                    )
+
+                    self.analysis.anr_reason = (
+                        incident_reason
+                    )
+
+    # ============================================================
+    # PROJECT RESOLUTION
+    # ============================================================
+
+    def resolve_project(self, package):
+
+        return self.resolver.resolve(
+            package
+        )
+
+    # ============================================================
+    # SOURCE LOCATION
+    # ============================================================
+
+    def locate_source(self):
+
+        workspace = Path(
+            self.workspace
+        ).resolve()
+
+        report = (
+            self.build_source_report()
+        )
+
+        # --------------------------------------------------------
+        # First attempt:
+        # Existing stack-trace source search.
+        # --------------------------------------------------------
+
+        source = find_source(
+            workspace,
+            report
+        )
+
+        if source:
+
+            return source
+
+        # --------------------------------------------------------
+        # Second attempt:
+        # Activity-based discovery.
+        # --------------------------------------------------------
+
+        activity = (
+            self.analysis.activity
+            if self.analysis
+            else ""
+        )
+
+        activity_class = (
+            self.extract_activity_class(
+                activity
+            )
+        )
+
+        if activity_class:
+
+            print()
+            print(
+                "→ Searching by Activity class:"
+            )
+
+            print(
+                activity_class
+            )
+
+            candidates = []
+
+            candidates.extend(
+                workspace.rglob(
+                    f"{activity_class.split('.')[-1]}.kt"
+                )
+            )
+
+            candidates.extend(
+                workspace.rglob(
+                    f"{activity_class.split('.')[-1]}.java"
+                )
+            )
+
+            candidates = [
+                path
+                for path in candidates
+                if self.is_application_source(
+                    path
+                )
+            ]
+
+            if candidates:
+
+                best = (
+                    self.select_best_candidate(
+                        candidates
+                    )
+                )
+
+                return self.source_from_path(
+                    best
+                )
+
+        # --------------------------------------------------------
+        # Third attempt:
+        # Source-frame discovery.
+        # --------------------------------------------------------
+
+        if self.analysis:
+
+            source_frames = (
+                self.analysis.source_frames
+                or []
+            )
+
+            for frame in source_frames:
+
+                if not isinstance(
+                    frame,
+                    dict
+                ):
+                    continue
+
+                filename = (
+                    frame.get(
+                        "file",
+                        ""
+                    )
+                    or ""
+                )
+
+                if not filename:
+                    continue
+
+                candidates = list(
+                    workspace.rglob(
+                        filename
+                    )
+                )
+
+                candidates = [
+                    path
+                    for path in candidates
+                    if self.is_application_source(
+                        path
+                    )
+                ]
+
+                if candidates:
+
+                    best = (
+                        self.select_best_candidate(
+                            candidates
+                        )
+                    )
+
+                    return self.source_from_path(
+                        best
+                    )
+
+        # --------------------------------------------------------
+        # Fourth attempt:
+        # Package source directory.
+        # --------------------------------------------------------
+
+        package = (
+            self.analysis.package
+            if self.analysis
+            else getattr(
+                self.incident,
+                "package",
+                "",
+            )
+        )
+
+        if package:
+
+            package_path = (
+                package.replace(
+                    ".",
+                    "/"
+                )
+            )
+
+            search_paths = [
+                workspace
+                / "app"
+                / "src"
+                / "main"
+                / "java"
+                / package_path,
+
+                workspace
+                / "app"
+                / "src"
+                / "main"
+                / "kotlin"
+                / package_path,
+
+                workspace
+                / "src"
+                / "main"
+                / "java"
+                / package_path,
+
+                workspace
+                / "src"
+                / "main"
+                / "kotlin"
+                / package_path,
+            ]
+
+            candidates = []
+
+            for directory in search_paths:
+
+                if not directory.exists():
+                    continue
+
+                candidates.extend(
+                    directory.rglob(
+                        "*.kt"
+                    )
+                )
+
+                candidates.extend(
+                    directory.rglob(
+                        "*.java"
+                    )
+                )
+
+            candidates = [
+                path
+                for path in candidates
+                if self.is_application_source(
+                    path
+                )
+            ]
+
+            if candidates:
+
+                best = (
+                    self.select_best_candidate(
+                        candidates
+                    )
+                )
+
+                print()
+                print(
+                    "→ Package source candidate:"
+                )
+
+                print(
+                    best
+                )
+
+                return self.source_from_path(
+                    best
+                )
+
+        return None
+
+    # ============================================================
+    # BUILD SOURCE REPORT
+    # ============================================================
+
+    def build_source_report(self):
+
+        analysis = self.analysis
+
+        report = {
+            "package": (
+                analysis.package
+                if analysis
+                else getattr(
+                    self.incident,
+                    "package",
+                    "",
+                )
+            ),
+
+            "class": "",
+
+            "method": "",
+
+            "file": "",
+
+            "line": None,
+
+            "exception": (
+                analysis.exception
+                if analysis
+                else ""
+            ),
+
+            "reason": (
+                analysis.anr_reason
+                if analysis
+                else getattr(
+                    self.incident,
+                    "reason",
+                    "",
+                )
+            ),
+
+            "type": (
+                analysis.failure_type
+                if analysis
+                else getattr(
+                    self.incident,
+                    "bug_type",
+                    "UNKNOWN",
+                )
+            ),
+
+            "stacktrace": "",
+        }
+
+        if analysis:
+
+            frames = (
+                analysis.source_frames
+                or []
+            )
+
+            if frames:
+
+                frame = frames[0]
+
+                if isinstance(
+                    frame,
+                    dict
+                ):
+
+                    report["class"] = (
+                        frame.get(
+                            "class",
+                            ""
+                        )
+                    )
+
+                    report["method"] = (
+                        frame.get(
+                            "method",
+                            ""
+                        )
+                    )
+
+                    report["file"] = (
+                        frame.get(
+                            "file",
+                            ""
+                        )
+                    )
+
+                    report["line"] = (
+                        frame.get(
+                            "line"
+                        )
+                    )
+
+        return report
+
+    # ============================================================
+    # AI INPUT CONSTRUCTION
+    # ============================================================
+
+    def build_llm_input(self):
+
+        analysis = self.analysis
+
+        # --------------------------------------------------------
+        # Failure information
+        # --------------------------------------------------------
+
+        log_data = {
+            "type": (
+                analysis.failure_type
+                if analysis
+                else getattr(
+                    self.incident,
+                    "bug_type",
+                    "UNKNOWN",
+                )
+            ),
+
+            "bug_type": (
+                analysis.failure_type
+                if analysis
+                else getattr(
+                    self.incident,
+                    "bug_type",
+                    "UNKNOWN",
+                )
+            ),
+
+            "package": (
+                analysis.package
+                if analysis
+                else getattr(
+                    self.incident,
+                    "package",
+                    "",
+                )
+            ),
+
+            "process": (
+                analysis.process
+                if analysis
+                else getattr(
+                    self.incident,
+                    "process",
+                    "",
+                )
+            ),
+
+            "pid": (
+                analysis.pid
+                if analysis
+                else getattr(
+                    self.incident,
+                    "pid",
+                    None,
+                )
+            ),
+
+            "activity": (
+                analysis.activity
+                if analysis
+                else ""
+            ),
+
+            "exception": (
+                analysis.exception
+                if analysis
+                else getattr(
+                    self.incident,
+                    "exception",
+                    "",
+                )
+            ),
+
+            "reason": (
+                analysis.anr_reason
+                if analysis
+                else getattr(
+                    self.incident,
+                    "reason",
+                    "",
+                )
+            ),
+
+            "thread": (
+                getattr(
+                    analysis,
+                    "thread",
+                    None,
+                )
+                or getattr(
+                    self.incident,
+                    "thread",
+                    "",
+                )
+                or ""
+            ),
+
+            "stacktrace": (
+                getattr(
+                    self.incident,
+                    "stack_trace",
+                    "",
+                )
+                or ""
+            ),
+
+            "indicators": (
+                ", ".join(
+                    analysis.indicators
+                )
+                if analysis
+                and isinstance(
+                    getattr(
+                        analysis,
+                        "indicators",
+                        None,
+                    ),
+                    list
+                )
+                else (
+                    getattr(
+                        analysis,
+                        "indicators",
+                        "",
+                    )
+                    if analysis
+                    else ""
+                )
+            ),
+
+            "confidence": (
+                analysis.confidence
+                if analysis
+                else "UNKNOWN"
+            ),
+        }
+
+        # --------------------------------------------------------
+        # Source information
+        # --------------------------------------------------------
+
+        source_file = (
+            self.source.get(
+                "filename",
+                "",
+            )
+            if self.source
+            else ""
+        )
+
+        source_path = (
+            self.source.get(
+                "path",
+                "",
+            )
+            if self.source
+            else ""
+        )
+
+        source_snippet = ""
+
+        source_code = ""
+
+        if self.context:
+
+            source_snippet = (
+                self.context.get(
+                    "snippet",
+                    "",
+                )
+                or self.context.get(
+                    "source",
+                    "",
+                )
+                or self.context.get(
+                    "content",
+                    "",
+                )
+                or ""
+            )
+
+            source_code = (
+                self.context.get(
+                    "source",
+                    "",
+                )
+                or self.context.get(
+                    "content",
+                    "",
+                )
+                or ""
+            )
+
+            if not source_code:
+
+                source_code = (
+                    self.context.get(
+                        "code",
+                        "",
+                    )
+                    or ""
+                )
+
+        source_data = {
+            "file": source_file,
+
+            "filename": source_file,
+
+            "path": source_path,
+
+            "snippet": source_snippet,
+
+            "code": source_code,
+        }
+
+        return {
+            "log": log_data,
+            "source": source_data,
+        }
+
+    # ============================================================
+    # AI ANALYSIS
+    # ============================================================
+
+    def generate_ai_analysis(self):
+
+        llm_input = (
+            self.build_llm_input()
+        )
+
+        print()
+        print(
+            "→ Sending failure evidence and source "
+            "context to Gemini..."
+        )
+
+        print(
+            "  Failure type:",
+            llm_input["log"]["type"]
+        )
+
+        print(
+            "  Package:",
+            llm_input["log"]["package"]
+        )
+
+        print(
+            "  Source:",
+            llm_input["source"]["file"]
+        )
+
+        patch = ask_llm(
+            llm_input
+        )
+
+        return patch
+
+    # ============================================================
+    # AI RESULT PRINT
+    # ============================================================
+
+    def print_ai_result(self):
+
+        if not self.patch:
+            return
+
+        print()
+        print("=" * 70)
+        print("                 VAMP AI ANALYSIS")
+        print("=" * 70)
+
+        print()
+        print(
+            "Root Cause:"
+        )
+
+        print(
+            self.patch.root_cause
+            or "<not provided>"
+        )
+
+        print()
+        print(
+            "Confidence:",
+            self.patch.confidence
+        )
+
+        print()
+        print(
+            "Patch Required:",
+            self.patch.patch_required
+        )
+
+        print()
+        print(
+            "Can Reproduce:",
+            self.patch.can_reproduce
+        )
+
+        if self.patch.has_patch():
+
+            print()
+            print("=" * 70)
+            print("                 AI PATCH PROPOSAL")
+            print("=" * 70)
+
+            print()
+            print(
+                "Old Code:"
+            )
+
+            print(
+                self.patch.old_code
+            )
+
+            print()
+            print(
+                "New Code:"
+            )
+
+            print(
+                self.patch.new_code
+            )
+
+        else:
+
+            print()
+            print(
+                "No safe patch generated."
+            )
+
+        if self.patch.explanation:
+
+            print()
+            print(
+                "Explanation:"
+            )
+
+            print(
+                self.patch.explanation
+            )
+
+        if self.patch.tests:
+
+            print()
+            print(
+                "Recommended Tests:"
+            )
+
+            for test in self.patch.tests:
+
+                print(
+                    "  -",
+                    test
+                )
+
+        print()
+        print("=" * 70)
+
+    # ============================================================
+    # ACTIVITY CLASS EXTRACTION
+    # ============================================================
+
+    @staticmethod
+    def extract_activity_class(
+        activity
+    ):
+
+        if not activity:
+            return ""
+
+        value = activity.strip()
+
+        if "/" not in value:
+            return ""
+
+        package, component = (
+            value.split(
+                "/",
+                1
+            )
+        )
+
+        package = package.strip()
+        component = component.strip()
+
+        if not component:
+            return ""
+
+        if component.startswith("."):
+
+            return (
+                package
+                + component
+            )
+
+        if component.startswith(
+            package + "."
+        ):
+
+            return component
+
+        return component
+
+    # ============================================================
+    # SOURCE FILTERING
+    # ============================================================
+
+    @staticmethod
+    def is_application_source(
+        path
+    ):
+
+        path = Path(path)
+
+        if path.suffix not in (
+            ".kt",
+            ".java",
+        ):
+            return False
+
+        path_text = str(path)
+
+        if "/build/" in path_text:
+            return False
+
+        if "/generated/" in path_text:
+            return False
+
+        if "/test/" in path_text:
+            return False
+
+        if "/androidTest/" in path_text:
+            return False
+
+        return (
+            "/src/main/" in path_text
+        )
+
+    # ============================================================
+    # SOURCE CANDIDATE SCORING
+    # ============================================================
+
+    def select_best_candidate(
+        self,
+        candidates,
+    ):
+
+        package = (
+            self.analysis.package
+            if self.analysis
+            else ""
+        )
+
+        package_path = (
+            package.replace(
+                ".",
+                "/"
+            )
+            if package
+            else ""
+        )
+
+        activity = (
+            self.analysis.activity
+            if self.analysis
+            else ""
+        )
+
+        activity_class = (
+            self.extract_activity_class(
+                activity
+            )
+        )
+
+        activity_name = (
+            activity_class.split(
+                "."
+            )[-1]
+            if activity_class
+            else ""
+        )
+
+        scored = []
+
+        for path in candidates:
+
+            score = 0
+
+            path_text = str(path)
+
+            if "/src/main/" in path_text:
+                score += 20
+
+            if (
+                package_path
+                and package_path in path_text
+            ):
+                score += 60
+
+            if (
+                activity_name
+                and path.stem
+                == activity_name
+            ):
+                score += 100
+
+            if path.suffix in (
+                ".kt",
+                ".java",
+            ):
+                score += 10
+
+            scored.append(
+                (
+                    score,
+                    path
+                )
+            )
+
+        scored.sort(
+            key=lambda item: (
+                item[0],
+                str(item[1])
+            ),
+            reverse=True
+        )
+
+        return scored[0][1]
+
+    # ============================================================
+    # SOURCE OBJECT
+    # ============================================================
+
+    def source_from_path(
+        self,
+        path
+    ):
+
+        path = Path(
+            path
+        ).resolve()
+
+        return {
+            "path": str(path),
+
+            "filename": path.name,
+
+            "directory": str(
+                path.parent
+            ),
+
+            "package": (
+                self.analysis.package
+                if self.analysis
+                else ""
+            ),
+
+            "class": path.stem,
+
+            "workspace": str(
+                Path(
+                    self.workspace
+                ).resolve()
+            ),
+        }
+
+    # ============================================================
+    # SOURCE CONTEXT
+    # ============================================================
+
+    def read_source_context(self):
+
+        error_line = None
+        method = None
+
+        if self.analysis:
+
+            frames = (
+                self.analysis.source_frames
+                or []
+            )
+
+            if frames:
+
+                frame = frames[0]
+
+                if isinstance(
+                    frame,
+                    dict
+                ):
+
+                    error_line = (
+                        frame.get(
+                            "line"
+                        )
+                    )
+
+                    method = (
+                        frame.get(
+                            "method"
+                        )
+                    )
+
+        return read_context(
+            self.source["path"],
+            error_line=error_line,
+            method=method,
+        )
+
+    # ============================================================
+    # INCIDENT PRINT
+    # ============================================================
+
+    def print_incident(self):
+
+        print()
+        print(
+            "Incident Type :",
+            getattr(
+                self.incident,
+                "bug_type",
+                "UNKNOWN",
+            ),
+        )
+
+        print(
+            "Package       :",
+            getattr(
+                self.incident,
+                "package",
+                "",
+            )
+            or "<unknown>",
+        )
+
+        print(
+            "Process       :",
+            getattr(
+                self.incident,
+                "process",
+                "",
+            )
+            or "<unknown>",
+        )
+
+        print(
+            "PID           :",
+            getattr(
+                self.incident,
+                "pid",
+                None,
+            )
+            or "<unknown>",
+        )
+
+        print(
+            "Reason        :",
+            getattr(
+                self.incident,
+                "reason",
+                "",
+            )
+            or "<unknown>",
+        )
+
+        print(
+            "Exception     :",
+            getattr(
+                self.incident,
+                "exception",
+                "",
+            )
+            or "<unknown>",
+        )
+
+    # ============================================================
+    # FINAL DIAGNOSIS
+    # ============================================================
+
+    def print_final_diagnosis(
+        self,
+        source_found=False,
+        context_loaded=False,
+    ):
+
+        print()
+        print("=" * 70)
+        print("               VAMP DIAGNOSIS")
+        print("=" * 70)
+
+        if self.analysis:
+
+            print(
+                "Failure Type :",
+                self.analysis.failure_type
+            )
+
+            print(
+                "Package      :",
+                self.analysis.package
+                or "<unknown>"
+            )
+
+            print(
+                "Process      :",
+                self.analysis.process
+                or "<unknown>"
+            )
+
+            print(
+                "PID          :",
+                self.analysis.pid
+                or "<unknown>"
+            )
+
+            if self.analysis.activity:
+
+                print(
+                    "Activity     :",
+                    self.analysis.activity
+                )
+
+            if self.analysis.exception:
+
+                print(
+                    "Exception    :",
+                    self.analysis.exception
+                )
+
+            if self.analysis.exception_message:
+
+                print(
+                    "Message      :",
+                    self.analysis.exception_message
+                )
+
+            if self.analysis.anr_reason:
+
+                print(
+                    "ANR Reason   :",
+                    self.analysis.anr_reason
+                )
+
+            if self.analysis.native_signal:
+
+                signal_text = (
+                    self.analysis.native_signal
+                )
+
+                if self.analysis.native_signal_name:
+
+                    signal_text += (
+                        " ("
+                        + self.analysis.native_signal_name
+                        + ")"
+                    )
+
+                print(
+                    "Native Signal:",
+                    signal_text
+                )
+
+            print(
+                "Likely Area  :",
+                self.analysis.likely_area
+            )
+
+            print(
+                "Likely Cause :",
+                self.analysis.likely_cause
+            )
+
+            print(
+                "Confidence   :",
+                self.analysis.confidence
+            )
+
+        print()
+
+        print(
+            "Workspace    :",
+            self.workspace
+            or "<not resolved>"
+        )
+
+        print(
+            "Source Found :",
+            "YES"
+            if source_found
+            else "NO"
+        )
+
+        if self.source:
+
+            print(
+                "Source File  :",
+                self.source["path"]
+            )
+
+        print(
+            "Context      :",
+            "LOADED"
+            if context_loaded
+            else "NOT LOADED"
+        )
+
+        print("=" * 70)
+
+
+# ================================================================
+# MANUAL TEST
+# ================================================================
+
+if __name__ == "__main__":
+
+    from modules.models import Incident
+
+    incident = Incident(
+        timestamp="",
+        device_serial="0.0.0.0:6520",
+        package="com.example.demo",
+        process="com.example.demo",
+        pid=5479,
+        bug_type="ANR",
+        exception="",
+        reason="Input dispatching timed out",
+        thread="",
+        stack_trace="",
+        raw_log="",
+    )
+
+    agent = BugFixAgent(
+        incident=incident
+    )
+
+    result = agent.run()
+
+    print()
+    print(
+        "Diagnosis result:",
+        result
+    )
